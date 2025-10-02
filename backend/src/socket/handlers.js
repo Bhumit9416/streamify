@@ -4,36 +4,34 @@ export function setupSocketHandlers(io) {
   io.on("connection", (socket) => {
     console.log(`Socket connected: ${socket.id}`)
 
-    // User joins their personal room (based on their userId)
+    // ===================== USER ONLINE STATUS =====================
+    // User joins their personal room (based on userId)
     socket.on("join", async (userId) => {
       socket.join(userId)
-      console.log(`User ${userId} joined their personal room and is now online.`)
+      console.log(`User ${userId} joined personal room and is now online.`)
 
-      // Update user online status
       try {
         await User.findByIdAndUpdate(userId, { is_online: true, last_seen: new Date() })
-        io.emit("userStatusUpdate", { userId, isOnline: true }) // Notify all clients
+        io.emit("userStatusUpdate", { userId, isOnline: true })
       } catch (error) {
         console.error("Error updating user online status on join:", error)
       }
     })
 
-    // Join a conversation room
+    // ===================== CONVERSATION ROOMS =====================
     socket.on("joinConversation", (conversationId) => {
       socket.join(conversationId)
-      console.log(`Socket ${socket.id} joined conversation room: ${conversationId}`)
+      console.log(`Socket ${socket.id} joined conversation: ${conversationId}`)
     })
 
-    // Leave a conversation room
     socket.on("leaveConversation", (conversationId) => {
       socket.leave(conversationId)
-      console.log(`Socket ${socket.id} left conversation room: ${conversationId}`)
+      console.log(`Socket ${socket.id} left conversation: ${conversationId}`)
     })
 
-    // Handle new messages (server-side handling might be different if using REST API for messages)
-    // This is more for real-time updates after a message is saved via REST
+    // ===================== SEND MESSAGE =====================
     socket.on("sendMessage", async (data) => {
-      // Data: { conversationId, content, senderId, replyTo }
+      // Data: { conversationId, content, senderId, replyTo, message_type }
       console.log("Received sendMessage:", data)
       try {
         const newMessage = new Message({
@@ -45,14 +43,9 @@ export function setupSocketHandlers(io) {
         })
         await newMessage.save()
 
-        // Populate sender details for the emitted message
         const populatedMessage = await newMessage.populate("sender_id", "username avatar_url")
-
-        // Update conversation's updated_at timestamp
         await Conversation.findByIdAndUpdate(data.conversationId, { updated_at: new Date() })
 
-        // Emit to all participants in the conversation
-        // Get participants from the conversation
         const conversation = await Conversation.findById(data.conversationId)
         if (conversation) {
           conversation.participants.forEach((participantId) => {
@@ -64,14 +57,13 @@ export function setupSocketHandlers(io) {
       }
     })
 
-    // Handle typing indicator
+    // ===================== TYPING INDICATOR =====================
     socket.on("typing", (data) => {
       // Data: { conversationId, userId, isTyping }
-      // Emit to others in the conversation room, excluding the sender
       socket.to(data.conversationId).emit("typing", data)
     })
 
-    // Handle message reactions
+    // ===================== MESSAGE REACTIONS =====================
     socket.on("reactToMessage", async (data) => {
       // Data: { messageId, userId, emoji }
       try {
@@ -112,12 +104,10 @@ export function setupSocketHandlers(io) {
       }
     })
 
-    // Handle disconnect
+    // ===================== DISCONNECT =====================
     socket.on("disconnect", async () => {
       console.log(`Socket disconnected: ${socket.id}`)
-      // In a more robust system, you'd track users by their ID not just socket ID
-      // and update their status more reliably (e.g., using a heartbeat or last-seen logic)
-      // For now, if a user explicitly joined their room, they might be marked offline after some time
+      // Optional: implement logic to mark user offline if needed
     })
   })
 }

@@ -1,12 +1,11 @@
 import { Router } from "express"
 import { User } from "../config/db.js" // Import Mongoose User model
+import { authenticateToken } from "../middleware/auth.js"
 
 const router = Router()
 
-// @route   GET /api/users/me
-// @desc    Get authenticated user's profile
-// @access  Private
-router.get("/me", async (req, res) => {
+// ===================== GET AUTHENTICATED USER =====================
+router.get("/me", authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select("-password_hash") // Exclude password hash
     if (!user) {
@@ -19,10 +18,8 @@ router.get("/me", async (req, res) => {
   }
 })
 
-// @route   PUT /api/users/me
-// @desc    Update authenticated user's profile
-// @access  Private
-router.put("/me", async (req, res) => {
+// ===================== UPDATE USER PROFILE =====================
+router.put("/me", authenticateToken, async (req, res) => {
   const { username, avatar_url, native_language, learning_languages, theme } = req.body
 
   try {
@@ -45,10 +42,8 @@ router.put("/me", async (req, res) => {
   }
 })
 
-// @route   GET /api/users/search
-// @desc    Search for users by username or email
-// @access  Private
-router.get("/search", async (req, res) => {
+// ===================== SEARCH USERS =====================
+router.get("/search", authenticateToken, async (req, res) => {
   const { q } = req.query
 
   if (!q) {
@@ -57,7 +52,10 @@ router.get("/search", async (req, res) => {
 
   try {
     const users = await User.find({
-      $or: [{ username: { $regex: q, $options: "i" } }, { email: { $regex: q, $options: "i" } }],
+      $or: [
+        { username: { $regex: q, $options: "i" } },
+        { email: { $regex: q, $options: "i" } },
+      ],
     }).select("username avatar_url is_online") // Select relevant fields
 
     res.json(users)

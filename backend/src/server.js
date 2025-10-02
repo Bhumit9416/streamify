@@ -19,6 +19,8 @@ dotenv.config()
 
 const app = express()
 const server = createServer(app)
+
+// ===================== SOCKET.IO =====================
 const io = new Server(server, {
   cors: {
     origin: process.env.FRONTEND_URL || "http://localhost:5173",
@@ -26,18 +28,19 @@ const io = new Server(server, {
   },
 })
 
+// ===================== CONFIG =====================
 const PORT = process.env.PORT || 5001
 
 // Connect to MongoDB
 connectDB()
 
-// Rate limiting
+// ===================== RATE LIMITING =====================
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
 })
 
-// Middleware
+// ===================== MIDDLEWARE =====================
 app.use(helmet())
 app.use(
   cors({
@@ -50,7 +53,7 @@ app.use(express.json({ limit: "10mb" }))
 app.use(express.urlencoded({ extended: true }))
 app.use(limiter)
 
-// Routes
+// ===================== ROUTES =====================
 app.use("/api/auth", authRoutes)
 app.use("/api/chat", authenticateToken, chatRoutes)
 app.use("/api/users", authenticateToken, userRoutes)
@@ -61,10 +64,10 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() })
 })
 
-// Socket.IO setup
+// ===================== SOCKET.IO HANDLERS =====================
 setupSocketHandlers(io)
 
-// Error handling middleware
+// ===================== ERROR HANDLING =====================
 app.use((err, req, res, next) => {
   console.error(err.stack)
   res.status(500).json({ error: "Something went wrong!" })
@@ -75,6 +78,7 @@ app.use("*", (req, res) => {
   res.status(404).json({ error: "Route not found" })
 })
 
+// ===================== START SERVER =====================
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`)
   console.log(`📱 Frontend URL: ${process.env.FRONTEND_URL || "http://localhost:5173"}`)

@@ -1,19 +1,18 @@
 import { Router } from "express"
-import { Conversation, Message, MessageReaction } from "../config/db.js" // Import Mongoose models
-import { io } from "../server.js" // Import the Socket.IO instance
+import { Conversation, Message, MessageReaction } from "../config/db.js"
+import { io } from "../server.js"
+import { authenticateToken } from "../middleware/auth.js"
 
 const router = Router()
 
-// @route   GET /api/chat/conversations
-// @desc    Get all conversations for the authenticated user
-// @access  Private
-router.get("/conversations", async (req, res) => {
+// ===================== GET CONVERSATIONS =====================
+router.get("/conversations", authenticateToken, async (req, res) => {
   try {
     const userId = req.user._id
 
     const conversations = await Conversation.find({ participants: userId })
-      .populate("participants", "username avatar_url is_online") // Populate participant details
-      .populate("created_by", "username") // Populate creator details
+      .populate("participants", "username avatar_url is_online")
+      .populate("created_by", "username")
       .sort({ updated_at: -1 })
 
     res.json(conversations)
@@ -23,12 +22,10 @@ router.get("/conversations", async (req, res) => {
   }
 })
 
-// @route   POST /api/chat/conversations
-// @desc    Create a new conversation (direct or group)
-// @access  Private
-router.post("/conversations", async (req, res) => {
+// ===================== CREATE CONVERSATION =====================
+router.post("/conversations", authenticateToken, async (req, res) => {
   const { participantIds, name, type } = req.body
-  const currentUserId = req.user._id
+  const currentUserId = req.user._id.toString()
 
   if (!participantIds || !Array.isArray(participantIds) || participantIds.length === 0) {
     return res.status(400).json({ message: "Participant IDs are required" })
@@ -38,18 +35,15 @@ router.post("/conversations", async (req, res) => {
   }
 
   try {
-    // Ensure current user is part of participants
-    const allParticipants = Array.from(new Set([...participantIds, currentUserId.toString()]))
+    const allParticipants = Array.from(new Set([...participantIds.map(id => id.toString()), currentUserId]))
 
-    // For direct chats, check if a conversation already exists
+    // For direct chats, check if conversation exists
     if (type === "direct" && allParticipants.length === 2) {
       const existingConversation = await Conversation.findOne({
         type: "direct",
         participants: { $all: allParticipants, $size: 2 },
       })
-      if (existingConversation) {
-        return res.status(200).json(existingConversation) // Return existing direct chat
-      }
+      if (existingConversation) return res.status(200).json(existingConversation)
     }
 
     const newConversation = new Conversation({
@@ -60,12 +54,10 @@ router.post("/conversations", async (req, res) => {
     })
 
     await newConversation.save()
-
-    // Populate for response
     const populatedConversation = await newConversation.populate("participants", "username avatar_url is_online")
 
-    // Emit to participants that a new conversation has been created
-    allParticipants.forEach((pId) => {
+    // Emit to all participants
+    allParticipants.forEach(pId => {
       io.to(pId).emit("newConversation", populatedConversation)
     })
 
@@ -76,24 +68,21 @@ router.post("/conversations", async (req, res) => {
   }
 })
 
-// @route   GET /api/chat/conversations/:conversationId/messages
-// @desc    Get messages for a specific conversation
-// @access  Private
-router.get("/conversations/:conversationId/messages", async (req, res) => {
+// ===================== GET MESSAGES =====================
+router.get("/conversations/:conversationId/messages", authenticateToken, async (req, res) => {
   try {
     const { conversationId } = req.params
-    const userId = req.user._id
+    const userId = req.user._id.toString()
 
-    // Check if user is a participant in the conversation
     const conversation = await Conversation.findById(conversationId)
-    if (!conversation || !conversation.participants.includes(userId)) {
+    if (!conversation || !conversation.participants.map(id => id.toString()).includes(userId)) {
       return res.status(403).json({ message: "Not authorized to access this conversation" })
     }
 
     const messages = await Message.find({ conversation_id: conversationId })
-      .populate("sender_id", "username avatar_url") // Populate sender details
-      .populate("reply_to") // Populate replied message details if needed
-      .sort({ created_at: 1 }) // Oldest first
+      .populate("sender_id", "username avatar_url")
+      .populate("reply_to")
+      .sort({ created_at: 1 })
 
     res.json(messages)
   } catch (error) {
@@ -102,22 +91,17 @@ router.get("/conversations/:conversationId/messages", async (req, res) => {
   }
 })
 
-// @route   POST /api/chat/conversations/:conversationId/messages
-// @desc    Send a new message to a conversation
-// @access  Private
-router.post("/conversations/:conversationId/messages", async (req, res) => {
+// ===================== SEND MESSAGE =====================
+router.post("/conversations/:conversationId/messages", authenticateToken, async (req, res) => {
   const { conversationId } = req.params
   const { content, replyTo, message_type = "text" } = req.body
-  const senderId = req.user._id
+  const senderId = req.user._id.toString()
 
-  if (!content) {
-    return res.status(400).json({ message: "Message content is required" })
-  }
+  if (!content) return res.status(400).json({ message: "Message content is required" })
 
   try {
-    // Check if user is a participant in the conversation
     const conversation = await Conversation.findById(conversationId)
-    if (!conversation || !conversation.participants.includes(senderId)) {
+    if (!conversation || !conversation.participants.map(id => id.toString()).includes(senderId)) {
       return res.status(403).json({ message: "Not authorized to send messages in this conversation" })
     }
 
@@ -131,16 +115,14 @@ router.post("/conversations/:conversationId/messages", async (req, res) => {
 
     await newMessage.save()
 
-    // Update conversation's updated_at timestamp
+    // Update conversation timestamp
     conversation.updated_at = new Date()
     await conversation.save()
 
-    // Populate sender for the emitted message
     const populatedMessage = await newMessage.populate("sender_id", "username avatar_url")
 
-    // Emit the new message to all participants in the conversation
-    conversation.participants.forEach((participantId) => {
-      io.to(participantId.toString()).emit("newMessage", populatedMessage)
+    conversation.participants.forEach(pId => {
+      io.to(pId.toString()).emit("newMessage", populatedMessage)
     })
 
     res.status(201).json(populatedMessage)
@@ -150,31 +132,23 @@ router.post("/conversations/:conversationId/messages", async (req, res) => {
   }
 })
 
-// @route   POST /api/chat/messages/:messageId/reactions
-// @desc    Add a reaction to a message
-// @access  Private
-router.post("/messages/:messageId/reactions", async (req, res) => {
+// ===================== REACTIONS =====================
+router.post("/messages/:messageId/reactions", authenticateToken, async (req, res) => {
   const { messageId } = req.params
   const { emoji } = req.body
-  const userId = req.user._id
+  const userId = req.user._id.toString()
 
-  if (!emoji) {
-    return res.status(400).json({ message: "Emoji is required" })
-  }
+  if (!emoji) return res.status(400).json({ message: "Emoji is required" })
 
   try {
     const message = await Message.findById(messageId)
-    if (!message) {
-      return res.status(404).json({ message: "Message not found" })
-    }
+    if (!message) return res.status(404).json({ message: "Message not found" })
 
-    // Check if user is part of the conversation
     const conversation = await Conversation.findById(message.conversation_id)
-    if (!conversation || !conversation.participants.includes(userId)) {
+    if (!conversation || !conversation.participants.map(id => id.toString()).includes(userId)) {
       return res.status(403).json({ message: "Not authorized to react to this message" })
     }
 
-    // Check if user already reacted with this emoji
     const existingReaction = await MessageReaction.findOne({
       message_id: messageId,
       user_id: userId,
@@ -182,12 +156,10 @@ router.post("/messages/:messageId/reactions", async (req, res) => {
     })
 
     if (existingReaction) {
-      // If exists, remove it (toggle reaction)
       await existingReaction.deleteOne()
       io.to(conversation._id.toString()).emit("messageReactionRemoved", { messageId, userId, emoji })
       return res.json({ message: "Reaction removed" })
     } else {
-      // If not exists, add new reaction
       const newReaction = new MessageReaction({
         message_id: messageId,
         user_id: userId,

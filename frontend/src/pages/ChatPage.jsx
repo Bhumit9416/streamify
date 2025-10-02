@@ -18,33 +18,35 @@ import VideoCall from "../components/video/VideoCall.jsx"
 export default function ChatPage() {
   const { conversationId: paramConversationId } = useParams()
   const navigate = useNavigate()
-  const { conversations, messages, selectedConversationId, setConversations, setMessages, setSelectedConversation } =
-    useChatStore()
+
+  const {
+    conversations,
+    messages,
+    selectedConversationId,
+    setConversations,
+    setMessages,
+    setSelectedConversation,
+  } = useChatStore()
+
   const { user, logout } = useAuthStore()
   const [searchTerm, setSearchTerm] = useState("")
   const [searchResults, setSearchResults] = useState([])
   const [showNewChatSheet, setShowNewChatSheet] = useState(false)
-  const [showSidebar, setShowSidebar] = useState(false) // State for mobile sidebar
+  const [showSidebar, setShowSidebar] = useState(false)
 
-  // Effect to select conversation from URL param
-  useEffect(() => {
-    if (paramConversationId && paramConversationId !== selectedConversationId) {
-      setSelectedConversation(paramConversationId)
-      fetchMessages(paramConversationId)
-    }
-  }, [paramConversationId, selectedConversationId, setSelectedConversation])
-
+  // --- Fetch conversations from API ---
   const fetchConversations = useCallback(async () => {
     try {
       const response = await chatAPI.getConversations()
-      setConversations(response.data)
-      // If no conversation is selected and there are conversations, select the first one
-      if (!selectedConversationId && response.data.length > 0) {
-        setSelectedConversation(response.data[0]._id)
-        navigate(`/chat/${response.data[0]._id}`)
-      } else if (paramConversationId && !selectedConversationId) {
-        // If a conversation ID is in the URL but not yet selected
+      const convs = response.data || []
+      setConversations(convs)
+
+      // Prioritize URL param over first conversation
+      if (paramConversationId) {
         setSelectedConversation(paramConversationId)
+      } else if (!selectedConversationId && convs.length > 0) {
+        setSelectedConversation(convs[0]._id)
+        navigate(`/chat/${convs[0]._id}`)
       }
     } catch (error) {
       console.error("Error fetching conversations:", error)
@@ -52,15 +54,13 @@ export default function ChatPage() {
     }
   }, [setConversations, selectedConversationId, paramConversationId, setSelectedConversation, navigate])
 
+  // --- Fetch messages for a conversation ---
   const fetchMessages = useCallback(
     async (id) => {
-      if (!id) {
-        setMessages([])
-        return
-      }
+      if (!id) return setMessages([])
       try {
         const response = await chatAPI.getMessages(id)
-        setMessages(response.data)
+        setMessages(response.data || [])
       } catch (error) {
         console.error("Error fetching messages:", error)
         toast.error("Failed to load messages.")
@@ -70,27 +70,31 @@ export default function ChatPage() {
     [setMessages],
   )
 
+  // --- Load conversations on mount ---
   useEffect(() => {
     fetchConversations()
   }, [fetchConversations])
 
+  // --- Fetch messages whenever selected conversation changes ---
   useEffect(() => {
     if (selectedConversationId) {
       fetchMessages(selectedConversationId)
+      navigate(`/chat/${selectedConversationId}`, { replace: true })
     }
-  }, [selectedConversationId, fetchMessages])
+  }, [selectedConversationId, fetchMessages, navigate])
 
+  // --- Select conversation ---
   const handleSelectConversation = (id) => {
     setSelectedConversation(id)
-    navigate(`/chat/${id}`)
-    setShowSidebar(false) // Close sidebar on selection for mobile
+    setShowSidebar(false)
   }
 
+  // --- Search users ---
   const handleSearchUsers = useCallback(async () => {
     if (searchTerm.trim().length > 2) {
       try {
         const response = await usersAPI.searchUsers(searchTerm.trim())
-        setSearchResults(response.data.filter((u) => u._id !== user.id)) // Exclude current user
+        setSearchResults(response.data.filter((u) => u._id !== user.id))
       } catch (error) {
         console.error("Error searching users:", error)
         toast.error("Failed to search users.")
@@ -104,11 +108,11 @@ export default function ChatPage() {
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
       handleSearchUsers()
-    }, 500) // Debounce search
-
+    }, 500)
     return () => clearTimeout(delayDebounceFn)
   }, [searchTerm, handleSearchUsers])
 
+  // --- Create direct conversation ---
   const handleCreateDirectConversation = async (participantId) => {
     try {
       const response = await chatAPI.createConversation({
@@ -116,28 +120,25 @@ export default function ChatPage() {
         type: "direct",
       })
       setSelectedConversation(response.data._id)
-      navigate(`/chat/${response.data._id}`)
       setShowNewChatSheet(false)
       toast.success("Direct chat created!")
-      fetchConversations() // Re-fetch to update sidebar
+      fetchConversations()
     } catch (error) {
       console.error("Error creating direct conversation:", error)
       toast.error(error.response?.data?.message || "Failed to create direct chat.")
     }
   }
 
-  const currentConversation = useMemo(() => {
-    return conversations.find((conv) => conv._id === selectedConversationId)
-  }, [conversations, selectedConversationId])
+  const currentConversation = useMemo(
+    () => conversations.find((c) => c._id === selectedConversationId),
+    [conversations, selectedConversationId],
+  )
 
   const getConversationHeaderName = () => {
     if (!currentConversation) return "Select a chat"
-    if (currentConversation.type === "group") {
-      return currentConversation.name || "Group Chat"
-    }
-    // Direct chat: display other participant's name
-    const otherParticipant = currentConversation.participants.find((p) => p._id !== user.id)
-    return otherParticipant?.username || "Direct Message"
+    if (currentConversation.type === "group") return currentConversation.name || "Group Chat"
+    const other = currentConversation.participants.find((p) => p._id !== user.id)
+    return other?.username || "Direct Message"
   }
 
   const handleLogout = async () => {
@@ -154,13 +155,12 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-screen w-full bg-gray-50 dark:bg-gray-950">
-      {/* Sidebar for larger screens */}
+      {/* Sidebar */}
       <div className="hidden md:flex w-80 flex-col border-r bg-white dark:bg-gray-900">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-xl font-bold">Chats</h2>
           <Button variant="ghost" size="icon" onClick={() => setShowNewChatSheet(true)}>
             <UserPlusIcon className="h-5 w-5" />
-            <span className="sr-only">New chat</span>
           </Button>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -177,95 +177,32 @@ export default function ChatPage() {
           <Button variant="ghost" className="w-full justify-start" onClick={() => navigate("/settings")}>
             <SettingsIcon className="mr-2 h-4 w-4" /> Settings
           </Button>
-          <Button
-            variant="ghost"
-            className="w-full justify-start text-red-500 hover:text-red-600"
-            onClick={handleLogout}
-          >
+          <Button variant="ghost" className="w-full justify-start text-red-500 hover:text-red-600" onClick={handleLogout}>
             <LogOutIcon className="mr-2 h-4 w-4" /> Log Out
           </Button>
         </div>
       </div>
 
-      {/* Main chat window */}
+      {/* Main chat */}
       <div className="flex flex-col flex-1">
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b bg-white dark:bg-gray-900">
-          <div className="md:hidden">
-            <Sheet open={showSidebar} onOpenChange={setShowSidebar}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <MenuIcon className="h-6 w-6" />
-                  <span className="sr-only">Open sidebar</span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-80 p-0">
-                <div className="flex flex-col h-full">
-                  <div className="flex items-center justify-between p-4 border-b">
-                    <h2 className="text-xl font-bold">Chats</h2>
-                    <Button variant="ghost" size="icon" onClick={() => setShowNewChatSheet(true)}>
-                      <UserPlusIcon className="h-5 w-5" />
-                      <span className="sr-only">New chat</span>
-                    </Button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    <ChatSidebar
-                      conversations={conversations}
-                      selectedConversationId={selectedConversationId}
-                      onSelectConversation={handleSelectConversation}
-                    />
-                  </div>
-                  <div className="p-4 border-t flex flex-col gap-2">
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start"
-                      onClick={() => {
-                        navigate("/")
-                        setShowSidebar(false)
-                      }}
-                    >
-                      <HomeIcon className="mr-2 h-4 w-4" /> Home
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start"
-                      onClick={() => {
-                        navigate("/settings")
-                        setShowSidebar(false)
-                      }}
-                    >
-                      <SettingsIcon className="mr-2 h-4 w-4" /> Settings
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start text-red-500 hover:text-red-600"
-                      onClick={handleLogout}
-                    >
-                      <LogOutIcon className="mr-2 h-4 w-4" /> Log Out
-                    </Button>
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
-          </div>
           <h1 className="text-lg font-semibold">{getConversationHeaderName()}</h1>
           <Button variant="ghost" size="icon" disabled={!selectedConversationId}>
             <VideoIcon className="h-5 w-5" />
-            <span className="sr-only">Video call</span>
           </Button>
         </div>
 
-        {/* Message Area */}
+        {/* Messages */}
         {selectedConversationId ? (
-          <>
+          <div className="flex-1 flex flex-col">
             <MessageList />
-            {currentConversation && <VideoCall conversationId={currentConversation._id} />}
             <div className="p-4 border-t bg-white dark:bg-gray-900">
               <MessageInput conversationId={selectedConversationId} />
             </div>
-          </>
+            {currentConversation && <VideoCall conversationId={currentConversation._id} />}
+          </div>
         ) : (
-          <div className="flex flex-1 items-center justify-center text-gray-500 dark:text-gray-400">
+          <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400">
             Select a conversation or start a new one.
           </div>
         )}
@@ -288,24 +225,18 @@ export default function ChatPage() {
             </div>
             <div className="flex-1 overflow-y-auto">
               {searchResults.length > 0 ? (
-                <div className="grid gap-2">
-                  {searchResults.map((user) => (
-                    <Button
-                      key={user._id}
-                      variant="ghost"
-                      className="w-full justify-start py-2 px-3 flex items-center gap-3"
-                      onClick={() => handleCreateDirectConversation(user._id)}
-                    >
-                      <img
-                        src={user.avatar_url || "/placeholder-user.jpg"}
-                        alt="Avatar"
-                        className="w-8 h-8 rounded-full"
-                      />
-                      {user.username}
-                      {user.is_online && <span className="h-2 w-2 rounded-full bg-green-500 ml-auto" title="Online" />}
-                    </Button>
-                  ))}
-                </div>
+                searchResults.map((u) => (
+                  <Button
+                    key={u._id}
+                    variant="ghost"
+                    className="w-full justify-start py-2 px-3 flex items-center gap-3"
+                    onClick={() => handleCreateDirectConversation(u._id)}
+                  >
+                    <img src={u.avatar_url || "/placeholder-user.jpg"} alt="Avatar" className="w-8 h-8 rounded-full" />
+                    {u.username}
+                    {u.is_online && <span className="h-2 w-2 rounded-full bg-green-500 ml-auto" />}
+                  </Button>
+                ))
               ) : (
                 searchTerm.length > 2 && <p className="text-center text-gray-500">No users found.</p>
               )}
@@ -314,26 +245,5 @@ export default function ChatPage() {
         </SheetContent>
       </Sheet>
     </div>
-  )
-}
-
-function MenuIcon(props) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="4" x2="20" y1="12" y2="12" />
-      <line x1="4" x2="20" y1="6" y2="6" />
-      <line x1="4" x2="20" y1="18" y2="18" />
-    </svg>
   )
 }

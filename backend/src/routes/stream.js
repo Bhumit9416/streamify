@@ -1,16 +1,15 @@
 import { Router } from "express"
 import { streamClient } from "../config/stream.js"
+import { authenticateToken } from "../middleware/auth.js"
 
 const router = Router()
 
-// @route   POST /api/stream/token
-// @desc    Generate a Stream user token for the authenticated user
-// @access  Private
-router.post("/token", async (req, res) => {
+// ===================== GENERATE STREAM TOKEN =====================
+router.post("/token", authenticateToken, async (req, res) => {
   try {
-    const userId = req.user._id.toString() // Convert ObjectId to string
-    const username = req.user.username
-    const avatar_url = req.user.avatar_url
+    const userId = req.user._id.toString()
+    const username = req.user.username || `user-${userId}`
+    const avatar_url = req.user.avatar_url || ""
 
     // Create or update Stream user
     await streamClient.upsertUser({
@@ -24,7 +23,7 @@ router.post("/token", async (req, res) => {
     res.json({
       token,
       userId,
-      apiKey: process.env.STREAM_API_KEY, // Send API key to client for Stream SDK initialization
+      apiKey: process.env.STREAM_API_KEY, 
       hasCredentials: !!process.env.STREAM_API_KEY && !!process.env.STREAM_API_SECRET,
     })
   } catch (error) {
@@ -33,10 +32,8 @@ router.post("/token", async (req, res) => {
   }
 })
 
-// @route   GET /api/stream/config
-// @desc    Get Stream API key and credential status
-// @access  Private
-router.get("/config", (req, res) => {
+// ===================== GET STREAM CONFIG =====================
+router.get("/config", authenticateToken, (req, res) => {
   try {
     res.json({
       apiKey: process.env.STREAM_API_KEY,

@@ -1,14 +1,13 @@
-import { Router } from "express"
-import bcrypt from "bcryptjs"
-import jwt from "jsonwebtoken"
-import { body, validationResult } from "express-validator"
-import { User } from "../config/db.js" // Import Mongoose User model
+import { Router } from "express";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { body, validationResult } from "express-validator";
+import { User } from "../config/db.js"; // Mongoose User model
+import { authenticateToken } from "../middleware/auth.js"; // Your middleware
 
-const router = Router()
+const router = Router();
 
-// @route   POST /api/auth/signup
-// @desc    Register user
-// @access  Public
+// ===================== SIGNUP =====================
 router.post(
   "/signup",
   [
@@ -19,40 +18,37 @@ router.post(
     body("learningLanguages").isArray().withMessage("Learning languages must be an array"),
   ],
   async (req, res) => {
-    const errors = validationResult(req)
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() })
-    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { email, username, password, nativeLanguage, learningLanguages } = req.body
+    const { email, username, password, nativeLanguage, learningLanguages } = req.body;
 
     try {
-      let user = await User.findOne({ $or: [{ email }, { username }] })
-      if (user) {
-        return res.status(400).json({ message: "User with that email or username already exists" })
-      }
+      // Check if user exists
+      let user = await User.findOne({ $or: [{ email }, { username }] });
+      if (user) return res.status(400).json({ message: "User with that email or username already exists" });
 
-      const salt = await bcrypt.genSalt(10)
-      const password_hash = await bcrypt.hash(password, salt)
+      // Hash password
+      const salt = await bcrypt.genSalt(10);
+      const password_hash = await bcrypt.hash(password, salt);
 
+      // Create user
       user = new User({
         email,
         username,
         password_hash,
         native_language: nativeLanguage,
         learning_languages: learningLanguages,
-        theme: "light", // Default theme
+        theme: "light",
         is_online: false,
         last_seen: new Date(),
-      })
+      });
 
-      await user.save()
+      await user.save();
 
-      if (!process.env.JWT_SECRET) {
-        throw new Error("JWT_SECRET is not defined in environment variables.")
-      }
-
-      const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" })
+      // Generate JWT
+      if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not defined in environment variables.");
+      const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
       res.status(201).json({
         message: "User registered successfully",
@@ -66,17 +62,15 @@ router.post(
           learning_languages: user.learning_languages,
           theme: user.theme,
         },
-      })
+      });
     } catch (error) {
-      console.error(error)
-      res.status(500).json({ message: "Server error during signup" })
+      console.error("Signup error:", error);
+      res.status(500).json({ message: "Server error during signup" });
     }
-  },
-)
+  }
+);
 
-// @route   POST /api/auth/signin
-// @desc    Authenticate user & get token
-// @access  Public
+// ===================== SIGNIN =====================
 router.post(
   "/signin",
   [
@@ -84,34 +78,26 @@ router.post(
     body("password").notEmpty().withMessage("Password is required"),
   ],
   async (req, res) => {
-    const errors = validationResult(req)
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() })
-    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { email, password } = req.body
+    const { email, password } = req.body;
 
     try {
-      const user = await User.findOne({ email })
-      if (!user) {
-        return res.status(400).json({ message: "Invalid credentials" })
-      }
+      const user = await User.findOne({ email });
+      if (!user || !user.password_hash) return res.status(400).json({ message: "Invalid credentials" });
 
-      const isMatch = await bcrypt.compare(password, user.password_hash)
-      if (!isMatch) {
-        return res.status(400).json({ message: "Invalid credentials" })
-      }
+      // Compare passwords safely
+      const isMatch = await bcrypt.compare(password, user.password_hash);
+      if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
-      if (!process.env.JWT_SECRET) {
-        throw new Error("JWT_SECRET is not defined in environment variables.")
-      }
+      if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not defined in environment variables.");
+      const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-      const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" })
-
-      // Update user online status and last seen
-      user.is_online = true
-      user.last_seen = new Date()
-      await user.save()
+      // Update online status
+      user.is_online = true;
+      user.last_seen = new Date();
+      await user.save();
 
       res.json({
         message: "Signed in successfully",
@@ -127,35 +113,29 @@ router.post(
           is_online: user.is_online,
           last_seen: user.last_seen,
         },
-      })
+      });
     } catch (error) {
-      console.error(error)
-      res.status(500).json({ message: "Server error during signin" })
+      console.error("Signin error:", error);
+      res.status(500).json({ message: "Server error during signin" });
     }
-  },
-)
-
-// @route   POST /api/auth/signout
-// @desc    Sign out user (invalidate token on client-side)
-// @access  Private (handled by client removing token)
-router.post("/signout", async (req, res) => {
-  // In a token-based system, signout is primarily a client-side action
-  // where the client discards the token.
-  // However, we can update the user's online status here.
-  try {
-    // Assuming authenticateToken middleware has attached user to req
-    const userId = req.user._id
-    const user = await User.findById(userId)
-    if (user) {
-      user.is_online = false
-      user.last_seen = new Date()
-      await user.save()
-    }
-    res.json({ message: "Signed out successfully" })
-  } catch (error) {
-    console.error("Error during signout:", error)
-    res.status(500).json({ message: "Server error during signout" })
   }
-})
+);
 
-export default router
+// ===================== SIGNOUT =====================
+router.post("/signout", authenticateToken, async (req, res) => {
+  try {
+    const user = req.user; // Attached by middleware
+    if (user) {
+      user.is_online = false;
+      user.last_seen = new Date();
+      await user.save();
+    }
+
+    res.json({ message: "Signed out successfully" });
+  } catch (error) {
+    console.error("Signout error:", error);
+    res.status(500).json({ message: "Server error during signout" });
+  }
+});
+
+export default router;
